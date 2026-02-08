@@ -204,7 +204,7 @@
 
 <div id="start">
   <h1>SHRED</h1>
-  <p>SWIPE FAST</p>
+  <p>PICK THE STRING</p>
   <button id="start-btn">▶</button>
 </div>
 
@@ -217,6 +217,7 @@ const highScoreDisplay = document.getElementById('high-score-value');
 const newRecordDisplay = document.getElementById('new-record');
 
 let W, H;
+let STRING_Y; // 弦の位置
 let audioCtx;
 let masterGain;
 let distortion, distortion2, distortion3;
@@ -226,25 +227,26 @@ const NOTE_LOW = 987.77;
 const NOTE_HIGH = 1108.73;
 let currentNote = 0;
 
-// Swipe tracking
+// String crossing detection
 let lastY = null;
-let lastSwipeTime = 0;
-let swipeDirection = 0; // 1 = down, -1 = up
+let lastCrossTime = 0;
 let noteTimes = [];
 let currentBPM = 0;
 let highScore = parseInt(localStorage.getItem('shred-bpm-record') || '0');
-const SWIPE_THRESHOLD = 8; // pixels to trigger note - low for speed
+const MIN_CROSS_INTERVAL = 20; // ms - 最小間隔（チャタリング防止）
 
 // Visuals
 let shapes = [];
 let screenShake = 0;
 let flashIntensity = 0;
+let stringGlow = 0;
 
 highScoreDisplay.textContent = highScore;
 
 function resize() {
   W = canvas.width = window.innerWidth;
   H = canvas.height = window.innerHeight;
+  STRING_Y = H / 2; // 弦は画面中央
 }
 resize();
 window.addEventListener('resize', resize);
@@ -256,13 +258,10 @@ function makeDistortionCurve(amount, type = 'fuzz') {
   for (let i = 0; i < samples; i++) {
     const x = (i * 2) / samples - 1;
     if (type === 'fuzz') {
-      // Extreme fuzz - square-ish clipping
       curve[i] = Math.sign(x) * Math.pow(Math.abs(Math.tanh(x * amount)), 0.4);
     } else if (type === 'scream') {
-      // Screaming harmonics
       curve[i] = Math.tanh(x * amount) + Math.sin(x * Math.PI * amount * 0.5) * 0.3;
     } else {
-      // Hard clip
       curve[i] = Math.max(-1, Math.min(1, x * amount));
     }
   }
@@ -275,52 +274,43 @@ function initAudio() {
   masterGain = audioCtx.createGain();
   masterGain.gain.value = 0.55;
   
-  // Stage 1 - Fuzz
   distortion = audioCtx.createWaveShaper();
   distortion.curve = makeDistortionCurve(100, 'fuzz');
   distortion.oversample = '4x';
   
-  // Stage 2 - Scream
   distortion2 = audioCtx.createWaveShaper();
   distortion2.curve = makeDistortionCurve(60, 'scream');
   distortion2.oversample = '4x';
   
-  // Stage 3 - Hard clip
   distortion3 = audioCtx.createWaveShaper();
   distortion3.curve = makeDistortionCurve(8, 'clip');
   distortion3.oversample = '4x';
   
-  // Scoop mids slightly, boost highs for イングウェイ tone
   const midCut = audioCtx.createBiquadFilter();
   midCut.type = 'peaking';
   midCut.frequency.value = 500;
   midCut.gain.value = -3;
   midCut.Q.value = 1;
   
-  // Presence - screaming highs
   const presence = audioCtx.createBiquadFilter();
   presence.type = 'peaking';
   presence.frequency.value = 3000;
   presence.gain.value = 10;
   presence.Q.value = 0.8;
   
-  // Treble boost
   const treble = audioCtx.createBiquadFilter();
   treble.type = 'highshelf';
   treble.frequency.value = 4000;
   treble.gain.value = 6;
   
-  // Tight low end
   const bass = audioCtx.createBiquadFilter();
   bass.type = 'highpass';
   bass.frequency.value = 120;
   
-  // Cabinet sim - but brighter
   const cabinet = audioCtx.createBiquadFilter();
   cabinet.type = 'lowpass';
   cabinet.frequency.value = 6000;
   
-  // Chain
   distortion.connect(midCut);
   midCut.connect(distortion2);
   distortion2.connect(presence);
@@ -351,11 +341,9 @@ function recordNote() {
   const now = performance.now();
   noteTimes.push(now);
   
-  // Keep last 2 seconds
   const cutoff = now - 2000;
   noteTimes = noteTimes.filter(t => t > cutoff);
   
-  // Calculate BPM from note intervals
   if (noteTimes.length >= 2) {
     const intervals = [];
     for (let i = 1; i < noteTimes.length; i++) {
@@ -388,18 +376,16 @@ function updateBPM() {
   }
 }
 
-// Play note - イングウェイ style high gain
-function playNote(x, y) {
+// Play note
+function playNote(x) {
   const t = audioCtx.currentTime;
   const freq = currentNote === 0 ? NOTE_LOW : NOTE_HIGH;
   currentNote = 1 - currentNote;
   
-  // Sawtooth for rich harmonics
   const osc = audioCtx.createOscillator();
   osc.type = 'sawtooth';
   osc.frequency.value = freq;
   
-  // Detuned for thickness
   const osc2 = audioCtx.createOscillator();
   osc2.type = 'sawtooth';
   osc2.frequency.value = freq * 1.004;
@@ -408,12 +394,10 @@ function playNote(x, y) {
   osc3.type = 'sawtooth';
   osc3.frequency.value = freq * 0.996;
   
-  // Octave up for scream
   const octave = audioCtx.createOscillator();
   octave.type = 'sawtooth';
   octave.frequency.value = freq * 2;
   
-  // Push HARD into distortion
   const preGain = audioCtx.createGain();
   preGain.gain.value = 5.0;
   
@@ -442,87 +426,99 @@ function playNote(x, y) {
   octave.stop(t + 0.1);
 }
 
-function handleSwipe(x, y, direction) {
+// 弦を横切ったかチェック
+function checkStringCross(prevY, currY, x) {
+  if (prevY === null) return false;
+  
+  const now = performance.now();
+  if (now - lastCrossTime < MIN_CROSS_INTERVAL) return false;
+  
+  // 弦を横切った（上から下、または下から上）
+  const crossedDown = prevY < STRING_Y && currY >= STRING_Y;
+  const crossedUp = prevY > STRING_Y && currY <= STRING_Y;
+  
+  if (crossedDown || crossedUp) {
+    lastCrossTime = now;
+    return true;
+  }
+  return false;
+}
+
+function handleStringCross(x, direction) {
   if (!audioCtx) return;
   
   recordNote();
-  playNote(x, y);
+  playNote(x);
   
-  addShapes(x, y, direction);
-  screenShake = 20 + currentBPM * 0.1;
-  flashIntensity = 0.7;
+  addShapes(x, STRING_Y, direction);
+  screenShake = 25 + currentBPM * 0.12;
+  flashIntensity = 0.8;
+  stringGlow = 1.0;
 }
 
-// Touch - swipe detection
+// Touch
+let touchLastY = {};
+
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  const t = e.touches[0];
-  lastY = t.clientY;
-  swipeDirection = 0;
+  for (let t of e.changedTouches) {
+    touchLastY[t.identifier] = t.clientY;
+  }
 }, { passive: false });
 
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
   if (!audioCtx) return;
   
-  const t = e.touches[0];
-  const deltaY = t.clientY - lastY;
-  
-  // Detect direction change or enough movement
-  const newDirection = deltaY > 0 ? 1 : -1;
-  
-  if (Math.abs(deltaY) >= SWIPE_THRESHOLD) {
-    // Trigger note on direction change or threshold crossed
-    if (newDirection !== swipeDirection || Math.abs(deltaY) >= SWIPE_THRESHOLD) {
-      handleSwipe(t.clientX, t.clientY, newDirection);
-      lastY = t.clientY;
-      swipeDirection = newDirection;
+  for (let t of e.changedTouches) {
+    const id = t.identifier;
+    const prevY = touchLastY[id];
+    const currY = t.clientY;
+    
+    if (checkStringCross(prevY, currY, t.clientX)) {
+      const direction = currY > prevY ? 1 : -1;
+      handleStringCross(t.clientX, direction);
     }
+    
+    touchLastY[id] = currY;
   }
 }, { passive: false });
 
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
-  lastY = null;
-  swipeDirection = 0;
+  for (let t of e.changedTouches) {
+    delete touchLastY[t.identifier];
+  }
 }, { passive: false });
 
-// Mouse - swipe detection
+// Mouse
 let mouseDown = false;
 let mouseLastY = null;
-let mouseDirection = 0;
 
 canvas.addEventListener('mousedown', e => {
   mouseDown = true;
   mouseLastY = e.clientY;
-  mouseDirection = 0;
 });
 
 canvas.addEventListener('mousemove', e => {
   if (!mouseDown || !audioCtx) return;
   
-  const deltaY = e.clientY - mouseLastY;
-  const newDirection = deltaY > 0 ? 1 : -1;
-  
-  if (Math.abs(deltaY) >= SWIPE_THRESHOLD) {
-    if (newDirection !== mouseDirection || Math.abs(deltaY) >= SWIPE_THRESHOLD) {
-      handleSwipe(e.clientX, e.clientY, newDirection);
-      mouseLastY = e.clientY;
-      mouseDirection = newDirection;
-    }
+  if (checkStringCross(mouseLastY, e.clientY, e.clientX)) {
+    const direction = e.clientY > mouseLastY ? 1 : -1;
+    handleStringCross(e.clientX, direction);
   }
+  
+  mouseLastY = e.clientY;
 });
 
 canvas.addEventListener('mouseup', () => {
   mouseDown = false;
   mouseLastY = null;
-  mouseDirection = 0;
 });
 
 canvas.addEventListener('mouseleave', () => {
   mouseDown = false;
   mouseLastY = null;
-  mouseDirection = 0;
 });
 
 // Jagged retro visuals - direction aware
@@ -672,7 +668,7 @@ function drawHLine(x, y, size, alpha) {
 function animate() {
   ctx.save();
   
-  // Screen shake - more intense
+  // Screen shake
   if (screenShake > 0) {
     ctx.translate(
       (Math.random() - 0.5) * screenShake,
@@ -685,7 +681,7 @@ function animate() {
   ctx.fillStyle = '#000';
   ctx.fillRect(-30, -30, W + 60, H + 60);
   
-  // Flash - more intense
+  // Flash
   if (flashIntensity > 0) {
     const flashColor = Math.random() > 0.3 ? '255, 0, 0' : '255, 255, 0';
     ctx.fillStyle = `rgba(${flashColor}, ${flashIntensity})`;
@@ -699,6 +695,32 @@ function animate() {
     ctx.fillRect(0, y, W, 1);
   }
   
+  // Draw THE STRING
+  // String glow
+  if (stringGlow > 0) {
+    ctx.shadowColor = '#ff0000';
+    ctx.shadowBlur = 30 * stringGlow;
+    stringGlow *= 0.9;
+  }
+  
+  // Main string line
+  ctx.strokeStyle = stringGlow > 0.3 ? `rgb(255, ${Math.floor(100 * stringGlow)}, 0)` : '#ff3300';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(0, STRING_Y);
+  ctx.lineTo(W, STRING_Y);
+  ctx.stroke();
+  
+  // String highlight
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, STRING_Y - 1);
+  ctx.lineTo(W, STRING_Y - 1);
+  ctx.stroke();
+  
+  ctx.shadowBlur = 0;
+  
   // Shapes
   shapes.forEach(s => {
     s.x += s.vx;
@@ -708,7 +730,6 @@ function animate() {
     s.alpha -= s.decay;
     if (s.rotSpeed) s.rotation += s.rotSpeed;
     
-    // Aggressive flickering color
     const r = 255;
     const g = Math.random() > 0.5 ? Math.floor(Math.random() * 150) : 0;
     const b = Math.random() > 0.9 ? 255 : 0;
@@ -735,7 +756,7 @@ function animate() {
   
   shapes = shapes.filter(s => s.alpha > 0);
   
-  // Heavy noise at any BPM > 50
+  // Noise
   if (currentBPM > 50) {
     const noiseAmount = Math.min(200, (currentBPM - 50) * 2);
     ctx.fillStyle = `rgba(255, 255, 255, 0.05)`;
@@ -748,7 +769,6 @@ function animate() {
       );
     }
     
-    // Random glitch lines
     if (Math.random() > 0.7) {
       ctx.fillStyle = `rgba(255, 0, 0, ${0.1 + Math.random() * 0.2})`;
       ctx.fillRect(0, Math.random() * H, W, Math.random() * 10 + 2);
