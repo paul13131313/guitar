@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>SHRED</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    height: 100%;
+    width: 100%;
+    position: fixed;
+  }
+
+  #canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+  }
+
+  /* BPM display */
+  #bpm-display {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  #current-bpm {
+    font-family: 'Courier New', monospace;
+    font-size: 150px;
+    font-weight: bold;
+    color: #ff0000;
+    text-shadow: 
+      4px 4px 0 #000,
+      -2px -2px 0 #ff0000,
+      6px 0 0 #00ffff;
+    line-height: 1;
+  }
+
+  #bpm-label {
+    font-family: 'Courier New', monospace;
+    font-size: 24px;
+    color: #ff0000;
+    letter-spacing: 0.5em;
+    margin-top: 10px;
+    text-shadow: 2px 2px 0 #000;
+  }
+
+  /* High score */
+  #high-score {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    text-align: right;
+    z-index: 10;
+  }
+
+  #high-score-label {
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: #666;
+    letter-spacing: 0.2em;
+  }
+
+  #high-score-value {
+    font-family: 'Courier New', monospace;
+    font-size: 48px;
+    font-weight: bold;
+    color: #ffff00;
+    text-shadow: 3px 3px 0 #000, -1px -1px 0 #ff0000;
+  }
+
+  #new-record {
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    color: #ff0000;
+    opacity: 0;
+    letter-spacing: 0.1em;
+  }
+
+  #new-record.show {
+    opacity: 1;
+    animation: blink 0.15s step-start infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; color: #ff0000; }
+    50% { opacity: 1; color: #ffff00; }
+  }
+
+  /* Reset */
+  #reset {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 10px 16px;
+    border: 3px solid #ff0000;
+    background: #000;
+    color: #ff0000;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    z-index: 10;
+  }
+
+  #reset:active {
+    background: #ff0000;
+    color: #000;
+  }
+
+  /* Start */
+  #start {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    transition: opacity 0.2s;
+  }
+
+  #start.hidden { opacity: 0; pointer-events: none; }
+
+  #start h1 {
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    color: #ff0000;
+    font-size: 72px;
+    letter-spacing: 0.3em;
+    text-shadow: 
+      4px 4px 0 #000,
+      -3px -3px 0 #ff0000,
+      6px 0 0 #00ffff;
+    animation: glitch 0.3s step-start infinite;
+  }
+
+  @keyframes glitch {
+    0%, 100% { transform: translate(0); }
+    20% { transform: translate(-2px, 2px); }
+    40% { transform: translate(2px, -2px); }
+    60% { transform: translate(-1px, -1px); }
+    80% { transform: translate(1px, 1px); }
+  }
+
+  #start p {
+    color: #ff0000;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    margin-top: 20px;
+    margin-bottom: 50px;
+    letter-spacing: 0.2em;
+  }
+
+  #start button {
+    width: 100px;
+    height: 100px;
+    border: 4px solid #ff0000;
+    background: #000;
+    color: #ff0000;
+    font-size: 48px;
+    cursor: pointer;
+  }
+
+  #start button:active { 
+    background: #ff0000; 
+    color: #000;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="bpm-display">
+  <div id="current-bpm">0</div>
+  <div id="bpm-label">BPM</div>
+</div>
+
+<div id="high-score">
+  <div id="high-score-label">BEST</div>
+  <div id="high-score-value">0</div>
+  <div id="new-record">★ NEW RECORD ★</div>
+</div>
+
+<button id="reset">RESET</button>
+
+<div id="start">
+  <h1>SHRED</h1>
+  <p>SWIPE FAST</p>
+  <button id="start-btn">▶</button>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+const bpmDisplay = document.getElementById('current-bpm');
+const highScoreDisplay = document.getElementById('high-score-value');
+const newRecordDisplay = document.getElementById('new-record');
+
+let W, H;
+let audioCtx;
+let masterGain;
+let distortion, distortion2, distortion3;
+
+// High notes - 1弦ハイポジション (B5, C#6 - 19f, 21f) - イングウェイ zone
+const NOTE_LOW = 987.77;
+const NOTE_HIGH = 1108.73;
+let currentNote = 0;
+
+// Swipe tracking
+let lastY = null;
+let lastSwipeTime = 0;
+let swipeDirection = 0; // 1 = down, -1 = up
+let noteTimes = [];
+let currentBPM = 0;
+let highScore = parseInt(localStorage.getItem('shred-bpm-record') || '0');
+const SWIPE_THRESHOLD = 8; // pixels to trigger note - low for speed
+
+// Visuals
+let shapes = [];
+let screenShake = 0;
+let flashIntensity = 0;
+
+highScoreDisplay.textContent = highScore;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Insane fuzz distortion - 3 stages
+function makeDistortionCurve(amount, type = 'fuzz') {
+  const samples = 44100;
+  const curve = new Float32Array(samples);
+  for (let i = 0; i < samples; i++) {
+    const x = (i * 2) / samples - 1;
+    if (type === 'fuzz') {
+      // Extreme fuzz - square-ish clipping
+      curve[i] = Math.sign(x) * Math.pow(Math.abs(Math.tanh(x * amount)), 0.4);
+    } else if (type === 'scream') {
+      // Screaming harmonics
+      curve[i] = Math.tanh(x * amount) + Math.sin(x * Math.PI * amount * 0.5) * 0.3;
+    } else {
+      // Hard clip
+      curve[i] = Math.max(-1, Math.min(1, x * amount));
+    }
+  }
+  return curve;
+}
+
+function initAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0.55;
+  
+  // Stage 1 - Fuzz
+  distortion = audioCtx.createWaveShaper();
+  distortion.curve = makeDistortionCurve(100, 'fuzz');
+  distortion.oversample = '4x';
+  
+  // Stage 2 - Scream
+  distortion2 = audioCtx.createWaveShaper();
+  distortion2.curve = makeDistortionCurve(60, 'scream');
+  distortion2.oversample = '4x';
+  
+  // Stage 3 - Hard clip
+  distortion3 = audioCtx.createWaveShaper();
+  distortion3.curve = makeDistortionCurve(8, 'clip');
+  distortion3.oversample = '4x';
+  
+  // Scoop mids slightly, boost highs for イングウェイ tone
+  const midCut = audioCtx.createBiquadFilter();
+  midCut.type = 'peaking';
+  midCut.frequency.value = 500;
+  midCut.gain.value = -3;
+  midCut.Q.value = 1;
+  
+  // Presence - screaming highs
+  const presence = audioCtx.createBiquadFilter();
+  presence.type = 'peaking';
+  presence.frequency.value = 3000;
+  presence.gain.value = 10;
+  presence.Q.value = 0.8;
+  
+  // Treble boost
+  const treble = audioCtx.createBiquadFilter();
+  treble.type = 'highshelf';
+  treble.frequency.value = 4000;
+  treble.gain.value = 6;
+  
+  // Tight low end
+  const bass = audioCtx.createBiquadFilter();
+  bass.type = 'highpass';
+  bass.frequency.value = 120;
+  
+  // Cabinet sim - but brighter
+  const cabinet = audioCtx.createBiquadFilter();
+  cabinet.type = 'lowpass';
+  cabinet.frequency.value = 6000;
+  
+  // Chain
+  distortion.connect(midCut);
+  midCut.connect(distortion2);
+  distortion2.connect(presence);
+  presence.connect(distortion3);
+  distortion3.connect(treble);
+  treble.connect(bass);
+  bass.connect(cabinet);
+  cabinet.connect(masterGain);
+  masterGain.connect(audioCtx.destination);
+  
+  animate();
+  setInterval(updateBPM, 50);
+}
+
+document.getElementById('start-btn').addEventListener('click', () => {
+  initAudio();
+  document.getElementById('start').classList.add('hidden');
+});
+
+document.getElementById('reset').addEventListener('click', () => {
+  highScore = 0;
+  localStorage.setItem('shred-bpm-record', '0');
+  highScoreDisplay.textContent = '0';
+  newRecordDisplay.classList.remove('show');
+});
+
+function recordNote() {
+  const now = performance.now();
+  noteTimes.push(now);
+  
+  // Keep last 2 seconds
+  const cutoff = now - 2000;
+  noteTimes = noteTimes.filter(t => t > cutoff);
+  
+  // Calculate BPM from note intervals
+  if (noteTimes.length >= 2) {
+    const intervals = [];
+    for (let i = 1; i < noteTimes.length; i++) {
+      intervals.push(noteTimes[i] - noteTimes[i-1]);
+    }
+    const avgInterval = intervals.reduce((a,b) => a+b, 0) / intervals.length;
+    currentBPM = Math.round(60000 / avgInterval);
+  }
+}
+
+function updateBPM() {
+  const now = performance.now();
+  const recentNotes = noteTimes.filter(t => t > now - 400).length;
+  
+  if (recentNotes < 2) {
+    currentBPM = Math.floor(currentBPM * 0.8);
+  }
+  
+  bpmDisplay.textContent = currentBPM;
+  
+  if (currentBPM > highScore) {
+    highScore = currentBPM;
+    localStorage.setItem('shred-bpm-record', highScore.toString());
+    highScoreDisplay.textContent = highScore;
+    newRecordDisplay.classList.add('show');
+  }
+  
+  if (currentBPM < highScore * 0.3) {
+    newRecordDisplay.classList.remove('show');
+  }
+}
+
+// Play note - イングウェイ style high gain
+function playNote(x, y) {
+  const t = audioCtx.currentTime;
+  const freq = currentNote === 0 ? NOTE_LOW : NOTE_HIGH;
+  currentNote = 1 - currentNote;
+  
+  // Sawtooth for rich harmonics
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.value = freq;
+  
+  // Detuned for thickness
+  const osc2 = audioCtx.createOscillator();
+  osc2.type = 'sawtooth';
+  osc2.frequency.value = freq * 1.004;
+  
+  const osc3 = audioCtx.createOscillator();
+  osc3.type = 'sawtooth';
+  osc3.frequency.value = freq * 0.996;
+  
+  // Octave up for scream
+  const octave = audioCtx.createOscillator();
+  octave.type = 'sawtooth';
+  octave.frequency.value = freq * 2;
+  
+  // Push HARD into distortion
+  const preGain = audioCtx.createGain();
+  preGain.gain.value = 5.0;
+  
+  const octaveGain = audioCtx.createGain();
+  octaveGain.gain.value = 0.3;
+  
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(1.0, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+  
+  osc.connect(preGain);
+  osc2.connect(preGain);
+  osc3.connect(preGain);
+  octave.connect(octaveGain);
+  octaveGain.connect(preGain);
+  preGain.connect(gain);
+  gain.connect(distortion);
+  
+  osc.start(t);
+  osc2.start(t);
+  osc3.start(t);
+  octave.start(t);
+  osc.stop(t + 0.1);
+  osc2.stop(t + 0.1);
+  osc3.stop(t + 0.1);
+  octave.stop(t + 0.1);
+}
+
+function handleSwipe(x, y, direction) {
+  if (!audioCtx) return;
+  
+  recordNote();
+  playNote(x, y);
+  
+  addShapes(x, y, direction);
+  screenShake = 20 + currentBPM * 0.1;
+  flashIntensity = 0.7;
+}
+
+// Touch - swipe detection
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  lastY = t.clientY;
+  swipeDirection = 0;
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!audioCtx) return;
+  
+  const t = e.touches[0];
+  const deltaY = t.clientY - lastY;
+  
+  // Detect direction change or enough movement
+  const newDirection = deltaY > 0 ? 1 : -1;
+  
+  if (Math.abs(deltaY) >= SWIPE_THRESHOLD) {
+    // Trigger note on direction change or threshold crossed
+    if (newDirection !== swipeDirection || Math.abs(deltaY) >= SWIPE_THRESHOLD) {
+      handleSwipe(t.clientX, t.clientY, newDirection);
+      lastY = t.clientY;
+      swipeDirection = newDirection;
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  lastY = null;
+  swipeDirection = 0;
+}, { passive: false });
+
+// Mouse - swipe detection
+let mouseDown = false;
+let mouseLastY = null;
+let mouseDirection = 0;
+
+canvas.addEventListener('mousedown', e => {
+  mouseDown = true;
+  mouseLastY = e.clientY;
+  mouseDirection = 0;
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (!mouseDown || !audioCtx) return;
+  
+  const deltaY = e.clientY - mouseLastY;
+  const newDirection = deltaY > 0 ? 1 : -1;
+  
+  if (Math.abs(deltaY) >= SWIPE_THRESHOLD) {
+    if (newDirection !== mouseDirection || Math.abs(deltaY) >= SWIPE_THRESHOLD) {
+      handleSwipe(e.clientX, e.clientY, newDirection);
+      mouseLastY = e.clientY;
+      mouseDirection = newDirection;
+    }
+  }
+});
+
+canvas.addEventListener('mouseup', () => {
+  mouseDown = false;
+  mouseLastY = null;
+  mouseDirection = 0;
+});
+
+canvas.addEventListener('mouseleave', () => {
+  mouseDown = false;
+  mouseLastY = null;
+  mouseDirection = 0;
+});
+
+// Jagged retro visuals - direction aware
+function addShapes(x, y, direction) {
+  const count = 8 + Math.floor(currentBPM / 20);
+  
+  for (let i = 0; i < count; i++) {
+    const type = ['zigzag', 'bolt', 'cross', 'spike', 'slash'][Math.floor(Math.random() * 5)];
+    const baseAngle = direction > 0 ? Math.PI * 0.5 : -Math.PI * 0.5;
+    shapes.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 50,
+      vy: direction * (10 + Math.random() * 30),
+      size: 40 + Math.random() * 60 + currentBPM * 0.4,
+      rotation: baseAngle + (Math.random() - 0.5) * 1,
+      rotSpeed: (Math.random() - 0.5) * 1.0,
+      type,
+      alpha: 1,
+      decay: 0.03 + Math.random() * 0.02
+    });
+  }
+  
+  // Horizontal slash lines
+  for (let i = 0; i < 6; i++) {
+    shapes.push({
+      x: 0,
+      y: y + (Math.random() - 0.5) * 100,
+      vx: 0,
+      vy: direction * 5,
+      size: W,
+      rotation: 0,
+      type: 'hline',
+      alpha: 0.8,
+      decay: 0.1
+    });
+  }
+  
+  // Direction burst
+  for (let i = 0; i < 15; i++) {
+    const spread = (Math.random() - 0.5) * Math.PI * 0.6;
+    const baseAngle = direction > 0 ? Math.PI * 0.5 : -Math.PI * 0.5;
+    const angle = baseAngle + spread;
+    shapes.push({
+      x, y,
+      vx: Math.cos(angle) * 40,
+      vy: Math.sin(angle) * 40,
+      size: 100 + currentBPM,
+      rotation: angle,
+      type: 'line',
+      alpha: 1,
+      decay: 0.05
+    });
+  }
+}
+
+function drawZigzag(x, y, size, rotation) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.beginPath();
+  ctx.moveTo(-size/2, 0);
+  for (let i = 0; i < 6; i++) {
+    const px = -size/2 + (size/6) * (i + 0.5);
+    const py = (i % 2 === 0 ? -1 : 1) * size * 0.4;
+    ctx.lineTo(px, py);
+  }
+  ctx.lineTo(size/2, 0);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBolt(x, y, size, rotation) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.beginPath();
+  ctx.moveTo(-size*0.3, -size*0.5);
+  ctx.lineTo(size*0.15, -size*0.1);
+  ctx.lineTo(-size*0.1, -size*0.1);
+  ctx.lineTo(size*0.3, size*0.5);
+  ctx.lineTo(-size*0.15, size*0.1);
+  ctx.lineTo(size*0.1, size*0.1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCross(x, y, size, rotation) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.lineWidth = size * 0.15;
+  ctx.beginPath();
+  ctx.moveTo(-size/2, 0);
+  ctx.lineTo(size/2, 0);
+  ctx.moveTo(0, -size/2);
+  ctx.lineTo(0, size/2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawSpike(x, y, size, rotation) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.beginPath();
+  ctx.moveTo(0, -size/2);
+  ctx.lineTo(size*0.2, size/2);
+  ctx.lineTo(-size*0.2, size/2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawLine(x, y, size, rotation) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(size, 0);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawSlash(x, y, size, rotation) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(-size/2, size/2);
+  ctx.lineTo(size/2, -size/2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawHLine(x, y, size, alpha) {
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  ctx.lineTo(size, y);
+  ctx.strokeStyle = `rgba(255, 0, 0, ${alpha})`;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function animate() {
+  ctx.save();
+  
+  // Screen shake - more intense
+  if (screenShake > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * screenShake,
+      (Math.random() - 0.5) * screenShake
+    );
+    screenShake *= 0.8;
+  }
+  
+  // Black background
+  ctx.fillStyle = '#000';
+  ctx.fillRect(-30, -30, W + 60, H + 60);
+  
+  // Flash - more intense
+  if (flashIntensity > 0) {
+    const flashColor = Math.random() > 0.3 ? '255, 0, 0' : '255, 255, 0';
+    ctx.fillStyle = `rgba(${flashColor}, ${flashIntensity})`;
+    ctx.fillRect(0, 0, W, H);
+    flashIntensity *= 0.7;
+  }
+  
+  // Heavy scanlines
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  for (let y = 0; y < H; y += 3) {
+    ctx.fillRect(0, y, W, 1);
+  }
+  
+  // Shapes
+  shapes.forEach(s => {
+    s.x += s.vx;
+    s.y += s.vy;
+    s.vx *= 0.9;
+    s.vy *= 0.9;
+    s.alpha -= s.decay;
+    if (s.rotSpeed) s.rotation += s.rotSpeed;
+    
+    // Aggressive flickering color
+    const r = 255;
+    const g = Math.random() > 0.5 ? Math.floor(Math.random() * 150) : 0;
+    const b = Math.random() > 0.9 ? 255 : 0;
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${s.alpha})`;
+    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${s.alpha})`;
+    ctx.lineWidth = 5;
+    
+    if (s.type === 'hline') {
+      drawHLine(s.x, s.y, s.size, s.alpha);
+    } else if (s.type === 'zigzag') {
+      drawZigzag(s.x, s.y, s.size, s.rotation);
+    } else if (s.type === 'bolt') {
+      drawBolt(s.x, s.y, s.size, s.rotation);
+    } else if (s.type === 'cross') {
+      drawCross(s.x, s.y, s.size, s.rotation);
+    } else if (s.type === 'spike') {
+      drawSpike(s.x, s.y, s.size, s.rotation);
+    } else if (s.type === 'slash') {
+      drawSlash(s.x, s.y, s.size, s.rotation);
+    } else if (s.type === 'line') {
+      drawLine(s.x, s.y, s.size, s.rotation);
+    }
+  });
+  
+  shapes = shapes.filter(s => s.alpha > 0);
+  
+  // Heavy noise at any BPM > 50
+  if (currentBPM > 50) {
+    const noiseAmount = Math.min(200, (currentBPM - 50) * 2);
+    ctx.fillStyle = `rgba(255, 255, 255, 0.05)`;
+    for (let i = 0; i < noiseAmount; i++) {
+      ctx.fillRect(
+        Math.random() * W,
+        Math.random() * H,
+        Math.random() * 6 + 1,
+        Math.random() * 6 + 1
+      );
+    }
+    
+    // Random glitch lines
+    if (Math.random() > 0.7) {
+      ctx.fillStyle = `rgba(255, 0, 0, ${0.1 + Math.random() * 0.2})`;
+      ctx.fillRect(0, Math.random() * H, W, Math.random() * 10 + 2);
+    }
+  }
+  
+  ctx.restore();
+  requestAnimationFrame(animate);
+}
+</script>
+</body>
+</html>
